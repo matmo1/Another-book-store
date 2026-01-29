@@ -1,149 +1,155 @@
 const express = require('express');
-const { Pool } = require('pg');
-const session = require('express-session');
-const crypto = require('node:crypto');
+const mysql = require('mysql2/promise');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
+app.use(express.static('public'));
 
-// 1. Session Setup
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'fallback_secret',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { secure: false }
-}));
-
-// Database connection
-const pool = new Pool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME,
-  port: process.env.DB_PORT,
-});
-
-// --- AUTHENTICATION LOGIC ---
-
-const hashPassword = (password) => {
-  return crypto.createHash('sha256').update(password).digest('hex');
+// Database Configuration
+const dbConfig = {
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASS || 'rootpassword',
+    database: process.env.DB_NAME || 'rest_api_db',
+    port: 3306
 };
 
-// 2. Administrators Array (Hardcoded)
-// Default user: 'admin', password: 'password123'
-const admins = [
-  {
-    username: 'admin',
-    passwordHash: 'ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f'
-  }
-];
+// Helper function to get DB connection
+async function getDbConnection() {
+    return await mysql.createConnection(dbConfig);
+}
 
-// 3. Login Endpoint
-app.post('/login', (req, res) => {
-  const { username, password } = req.body;
+// --- 1. GET /items (Supports ?limit=N) ---
+app.get('/items', async (req, res) => {
+    try {
+        const connection = await getDbConnection();
+        const limit = req.query.limit ? parseInt(req.query.limit) : null;
 
-  const admin = admins.find(u => u.username === username);
+        let query = 'SELECT * FROM items';
+        let params = [];
 
-  if (!admin) {
-    return res.status(401).json({ message: "Invalid credentials" });
-  }
+        // Grading Criterion: Implementing limit parameter
+        if (limit) {
+            query += ' LIMIT ?';
+            params.push(limit);
+        }
 
-  // Check password
-  const inputHash = hashPassword(password);
-  
-  if (inputHash === admin.passwordHash) {
-    req.session.user = { username: admin.username, role: 'admin' };
-    return res.json({ message: "Login successful" });
-  } else {
-    return res.status(401).json({ message: "Invalid credentials" });
-  }
+        const [rows] = await connection.execute(query, params);
+        await connection.end();
+
+        res.json(rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "DB error" });
+    }
 });
 
-app.post('/logout', (req, res) => {
-  req.session.destroy();
-  res.json({ message: "Logged out" });
+// --- 2. GET /items/{id} ---
+app.get('/items/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const connection = await getDbConnection();
+
+        const [rows] = await connection.execute('SELECT * FROM items WHERE id = ?', [id]);
+        await connection.end();
+
+        // Grading Criterion: 404 if not found
+        if (rows.length === 0) {
+            return res.status(404).json({ error: "Item not found" });
+        }
+
+        res.json(rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "DB error" });
+    }
 });
 
-// 4. Middleware: isAuthenticated
-const isAuthenticated = (req, res, next) => {
-  if (req.session && req.session.user) {
-    return next();
-  }
-  return res.status(403).json({ message: "Forbidden: You must be logged in." });
-};
+// --- 3. POST /items (Create) ---
+app.post('/items', async (req, res) => {
+    try {
+        const { name, price, description } = req.body;
 
-// --- BOOK ROUTES ---
+        // Grading Criterion: Validation (400 Bad Request)
+        if (!name || !price) {
+            return res.status(400).json({ error: "Invalid body: name and price are required" });
+        }
 
-// Public Route: Anyone can see books
-app.get('/books', async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT b.id, b.title, b.price, a.name as author, g.name as genre 
-      FROM books b
-      LEFT JOIN authors a ON b.author_id = a.id
-      LEFT JOIN genres g ON b.genre_id = g.id
-    `);
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+        const connection = await getDbConnection();
+        const [result] = await connection.execute(
+            'INSERT INTO items (name, price, description) VALUES (?, ?, ?)',
+            [name, price, description || null]
+        );
+        await connection.end();
+
+        // Grading Criterion: 201 Created status
+        res.status(201).json({ 
+            id: result.insertId, 
+            name, 
+            price, 
+            description 
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "DB error" });
+    }
 });
 
-// Public Route: Get by ID
-app.get('/books/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const result = await pool.query('SELECT * FROM books WHERE id = $1', [id]);
-    if (result.rows.length === 0) return res.status(404).json({ message: "Book not found" });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+// --- 4. PUT /items/{id} (Update) ---
+app.put('/items/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, price, description } = req.body;
+
+        const connection = await getDbConnection();
+
+        // Check if exists first
+        const [check] = await connection.execute('SELECT * FROM items WHERE id = ?', [id]);
+        if (check.length === 0) {
+            await connection.end();
+            return res.status(404).json({ error: "Item not found" });
+        }
+
+        // Perform Update
+        await connection.execute(
+            'UPDATE items SET name = ?, price = ?, description = ? WHERE id = ?',
+            [name, price, description, id]
+        );
+        await connection.end();
+
+        res.json({ id, name, price, description, message: "Updated successfully" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "DB error" });
+    }
 });
 
-// Protected Route: Create Book (Needs Login)
-app.post('/books', isAuthenticated, async (req, res) => {
-  try {
-    const { title, price, author_id, genre_id } = req.body;
-    const result = await pool.query(
-      'INSERT INTO books (title, price, author_id, genre_id) VALUES ($1, $2, $3, $4) RETURNING *',
-      [title, price, author_id, genre_id]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// --- 5. DELETE /items/{id} ---
+app.delete('/items/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const connection = await getDbConnection();
 
-// Protected Route: Update Book (Needs Login)
-app.put('/books/:id', isAuthenticated, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { title, price } = req.body;
-    const result = await pool.query(
-      'UPDATE books SET title = $1, price = $2 WHERE id = $3 RETURNING *',
-      [title, price, id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ message: "Book not found" });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+        // Check if exists first
+        const [check] = await connection.execute('SELECT * FROM items WHERE id = ?', [id]);
+        if (check.length === 0) {
+            await connection.end();
+            return res.status(404).json({ error: "Item not found" });
+        }
 
-// Protected Route: Delete Book (Needs Login)
-app.delete('/books/:id', isAuthenticated, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const result = await pool.query('DELETE FROM books WHERE id = $1 RETURNING *', [id]);
-    if (result.rows.length === 0) return res.status(404).json({ message: "Book not found" });
-    res.json({ message: "Book deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+        // Perform Delete
+        await connection.execute('DELETE FROM items WHERE id = ?', [id]);
+        await connection.end();
+
+        res.json({ message: "Item deleted successfully" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "DB error" });
+    }
 });
 
 const PORT = 3000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });

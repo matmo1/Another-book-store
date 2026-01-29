@@ -7,19 +7,16 @@ services:
       - db
     environment:
       - DB_HOST=db
-      - DB_USER=user
-      - DB_PASS=password
-      - DB_NAME=bookstore
-      - DB_PORT=5432
+      - DB_USER=root
+      - DB_PASS=rootpassword
+      - DB_NAME=rest_api_db
 
   db:
-    image: postgres:15-alpine
+    image: mysql:8.0
     environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=bookstore
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=rest_api_db
     ports:
-      - "5432:5432"
+      - "3306:3306"
     volumes:
-      # This automatically creates the tables when the database starts
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql

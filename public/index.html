@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shop Manager</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; background: #f4f4f9; }
+        h1, h2 { color: #333; }
+        
+        /* Layout */
+        .grid-container { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 2rem; }
+        @media (max-width: 600px) { .grid-container { grid-template-columns: 1fr; } }
+
+        /* Cards */
+        .card { background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); height: fit-content; }
+        
+        /* Forms */
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; margin-bottom: .5rem; font-weight: bold; }
+        input, textarea { width: 100%; padding: .5rem; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        
+        /* Buttons */
+        button { background: #28a745; color: white; border: none; padding: .7rem 1.2rem; border-radius: 4px; cursor: pointer; font-size: 1rem; width: 100%; }
+        button:hover { background: #218838; }
+        button.secondary { background: #007bff; }
+        button.secondary:hover { background: #0069d9; }
+
+        /* Search Result */
+        #searchResult { margin-top: 1rem; padding: 1rem; border: 1px dashed #ccc; background: #fafafa; display: none; }
+        .found-item { color: #28a745; font-weight: bold; }
+        .not-found { color: #dc3545; font-weight: bold; }
+
+        /* Product List */
+        .item-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
+        .item { background: white; padding: 1rem; border-radius: 8px; border-left: 5px solid #007bff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); position: relative; }
+        .item h3 { margin: 0 0 .5rem 0; font-size: 1.2rem; }
+        .price { font-weight: bold; color: #28a745; font-size: 1.1rem; }
+        .desc { color: #666; font-size: 0.9rem; margin: .5rem 0; }
+        .delete-btn { background: #dc3545; font-size: 0.8rem; padding: .3rem .6rem; position: absolute; top: 1rem; right: 1rem; width: auto; }
+        .delete-btn:hover { background: #c82333; }
+    </style>
+</head>
+<body>
+
+    <h1>📦 Shop Inventory Manager</h1>
+
+    <div class="grid-container">
+        
+        <div class="card">
+            <h2>Add New Product</h2>
+            <form id="addForm">
+                <div class="form-group">
+                    <label>Product Name</label>
+                    <input type="text" id="name" required placeholder="e.g. Gaming Mouse">
+                </div>
+                <div class="form-group">
+                    <label>Price ($)</label>
+                    <input type="number" step="0.01" id="price" required placeholder="0.00">
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="description" rows="2" placeholder="Short description..."></textarea>
+                </div>
+                <button type="submit">Add Product</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>Find by ID</h2>
+            <div class="form-group">
+                <label>Enter Product ID</label>
+                <input type="number" id="searchId" placeholder="e.g. 1">
+            </div>
+            <button onclick="findItem()" class="secondary">Search</button>
+
+            <div id="searchResult"></div>
+        </div>
+    </div>
+
+    <h2>Current Inventory</h2>
+    <div id="itemList" class="item-list">
+        <p>Loading items...</p>
+    </div>
+
+    <script>
+        const API_URL = '/items';
+
+        // --- NEW: Find Item Logic ---
+        async function findItem() {
+            const id = document.getElementById('searchId').value;
+            const resultBox = document.getElementById('searchResult');
+            
+            if (!id) {
+                alert("Please enter an ID");
+                return;
+            }
+
+            resultBox.style.display = 'block';
+            resultBox.innerHTML = 'Searching...';
+
+            try {
+                const res = await fetch(`${API_URL}/${id}`);
+                
+                if (res.status === 404) {
+                    resultBox.innerHTML = '<span class="not-found">❌ Product not found</span>';
+                } else {
+                    const item = await res.json();
+                    resultBox.innerHTML = `
+                        <div class="found-item">✅ Found: ${item.name}</div>
+                        <p><strong>Price:</strong> $${item.price}</p>
+                        <p><strong>Desc:</strong> ${item.description}</p>
+                    `;
+                }
+            } catch (err) {
+                resultBox.innerHTML = '<span class="not-found">Server Error</span>';
+            }
+        }
+
+        // --- Standard Load/Add/Delete Logic ---
+
+        async function loadItems() {
+            const res = await fetch(API_URL);
+            const items = await res.json();
+            const container = document.getElementById('itemList');
+            container.innerHTML = ''; 
+
+            items.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'item';
+                div.innerHTML = `
+                    <h3>${item.name} <small>(ID: ${item.id})</small></h3>
+                    <div class="price">$${item.price}</div>
+                    <div class="desc">${item.description || 'No description'}</div>
+                    <button class="delete-btn" onclick="deleteItem(${item.id})">Delete</button>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        document.getElementById('addForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('name').value;
+            const price = document.getElementById('price').value;
+            const description = document.getElementById('description').value;
+
+            const res = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, price, description })
+            });
+
+            if (res.ok) {
+                document.getElementById('addForm').reset();
+                loadItems();
+            } else {
+                alert('Error adding item');
+            }
+        });
+
+        async function deleteItem(id) {
+            if(!confirm('Delete this item?')) return;
+            const res = await fetch(`${API_URL}/${id}`, { method: 'DELETE' });
+            if (res.ok) loadItems();
+        }
+
+        loadItems();
+    </script>
+</body>
+</html>
