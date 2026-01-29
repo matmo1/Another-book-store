@@ -18,7 +18,6 @@ const pool = new Pool({
 // 1. GET ALL Books
 app.get('/books', async (req, res) => {
   try {
-    // We join tables to give a nice response with Author names instead of just IDs
     const result = await pool.query(`
       SELECT b.id, b.title, b.price, a.name as author, g.name as genre 
       FROM books b
