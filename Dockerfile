@@ -1,4 +1,4 @@
-FROM node:18-alpine
+FROM node:20-alpine
 
 WORKDIR /usr/src/app
 
@@ -8,4 +8,5 @@ RUN npm install
 COPY . .
 
 EXPOSE 3000
-CMD ["node", "server.js"]
+# Updated command to load .env natively
+CMD ["node", "--env-file=.env", "server.js"]
