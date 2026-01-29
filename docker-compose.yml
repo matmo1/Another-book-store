@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+    environment:
+      - DB_HOST=db
+      - DB_USER=user
+      - DB_PASS=password
+      - DB_NAME=bookstore
+      - DB_PORT=5432
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=bookstore
+    ports:
+      - "5432:5432"
+    volumes:
+      # This automatically creates the tables when the database starts
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
