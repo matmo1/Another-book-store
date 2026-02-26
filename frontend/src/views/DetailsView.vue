@@ -1,11 +1,16 @@
 <template>
-  <div style="padding: 2rem;" v-if="item">
-    <h1>{{ item.name }}</h1>
-    <p><strong>Price:</strong> ${{ item.price }}</p>
-    <p><strong>Description:</strong> {{ item.description }}</p>
-    <router-link to="/">Back to Home</router-link>
+  <div class="container">
+    <div class="card" v-if="item" style="max-width: 500px; margin: 2rem auto;">
+      <h1>{{ item.name }}</h1>
+      <p class="price" style="font-size: 1.5rem;">${{ item.price }}</p>
+      <p><strong>Description:</strong> {{ item.description || 'No description provided.' }}</p>
+      
+      <router-link to="/">
+        <button class="secondary" style="margin-top: 1rem;">Back to Home</button>
+      </router-link>
+    </div>
+    <div v-else class="container">Loading item details...</div>
   </div>
-  <div v-else>Loading...</div>
 </template>
 
 <script setup>
