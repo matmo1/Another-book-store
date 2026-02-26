@@ -1,12 +1,12 @@
 const express = require('express');
 const mysql = require('mysql2/promise');
-const path = require('path');
+const cookieParser = require('cookie-parser');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 app.use(express.json());
-app.use(express.static('public'));
+app.use(cookieParser());
 
-// Database Configuration
 const dbConfig = {
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',
@@ -15,29 +15,94 @@ const dbConfig = {
     port: 3306
 };
 
-// Helper function to get DB connection
 async function getDbConnection() {
     return await mysql.createConnection(dbConfig);
 }
 
-// --- 1. GET /items (Supports ?limit=N) ---
-app.get('/items', async (req, res) => {
+// ==========================================
+// AUTHENTICATION ENDPOINTS
+// ==========================================
+
+app.post('/api/register', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: "Username and password are required" });
+
+    try {
+        const connection = await getDbConnection();
+        const [existing] = await connection.execute('SELECT * FROM users WHERE username = ?', [username]);
+        if (existing.length > 0) {
+            await connection.end();
+            return res.status(400).json({ error: "Username already exists" });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await connection.execute('INSERT INTO users (username, password) VALUES (?, ?)', [username, hashedPassword]);
+        await connection.end();
+
+        res.status(201).json({ message: "User registered successfully" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "DB error" });
+    }
+});
+
+app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: "Username and password required" });
+    
+    try {
+        const connection = await getDbConnection();
+        const [users] = await connection.execute('SELECT * FROM users WHERE username = ?', [username]);
+        await connection.end();
+
+        if (users.length === 0) return res.status(401).json({ error: "Invalid credentials" });
+
+        const user = users[0];
+        const isMatch = await bcrypt.compare(password, user.password);
+        
+        if (isMatch) {
+            res.cookie('user', username, { httpOnly: true, maxAge: 3600000 });
+            res.status(200).json({ message: "Logged in successfully" });
+        } else {
+            res.status(401).json({ error: "Invalid credentials" });
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "DB error" });
+    }
+});
+
+app.post('/api/logout', (req, res) => {
+    res.clearCookie('user');
+    res.status(200).json({ message: "Logged out successfully" });
+});
+
+app.get('/api/is-logged', (req, res) => {
+    const user = req.cookies.user;
+    if (user) {
+        res.json({ username: user });
+    } else {
+        res.json({ username: null }); 
+    }
+});
+
+// ==========================================
+// BOOKS API ENDPOINTS
+// ==========================================
+
+// Get all books
+app.get('/api/books', async (req, res) => {
     try {
         const connection = await getDbConnection();
         const limit = req.query.limit ? parseInt(req.query.limit) : null;
-
-        let query = 'SELECT * FROM items';
+        let query = 'SELECT * FROM books';
         let params = [];
-
-        // Grading Criterion: Implementing limit parameter
         if (limit) {
             query += ' LIMIT ?';
             params.push(limit);
         }
-
         const [rows] = await connection.execute(query, params);
         await connection.end();
-
         res.json(rows);
     } catch (err) {
         console.error(err);
@@ -45,20 +110,14 @@ app.get('/items', async (req, res) => {
     }
 });
 
-// --- 2. GET /items/{id} ---
-app.get('/items/:id', async (req, res) => {
+// Get book by ID
+app.get('/api/books/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const connection = await getDbConnection();
-
-        const [rows] = await connection.execute('SELECT * FROM items WHERE id = ?', [id]);
+        const [rows] = await connection.execute('SELECT * FROM books WHERE id = ?', [id]);
         await connection.end();
-
-        // Grading Criterion: 404 if not found
-        if (rows.length === 0) {
-            return res.status(404).json({ error: "Item not found" });
-        }
-
+        if (rows.length === 0) return res.status(404).json({ error: "Book not found" });
         res.json(rows[0]);
     } catch (err) {
         console.error(err);
@@ -66,83 +125,68 @@ app.get('/items/:id', async (req, res) => {
     }
 });
 
-// --- 3. POST /items (Create) ---
-app.post('/items', async (req, res) => {
+// Create a book
+app.post('/api/books', async (req, res) => {
     try {
-        const { name, price, description } = req.body;
-
-        // Grading Criterion: Validation (400 Bad Request)
-        if (!name || !price) {
-            return res.status(400).json({ error: "Invalid body: name and price are required" });
+        // Changed to reflect book data
+        const { title, author, price, description } = req.body;
+        if (!title || !author || !price) {
+            return res.status(400).json({ error: "Invalid body: title, author, and price are required" });
         }
 
         const connection = await getDbConnection();
         const [result] = await connection.execute(
-            'INSERT INTO items (name, price, description) VALUES (?, ?, ?)',
-            [name, price, description || null]
+            'INSERT INTO books (title, author, price, description) VALUES (?, ?, ?, ?)',
+            [title, author, price, description || null]
         );
         await connection.end();
-
-        // Grading Criterion: 201 Created status
-        res.status(201).json({ 
-            id: result.insertId, 
-            name, 
-            price, 
-            description 
-        });
+        res.status(201).json({ id: result.insertId, title, author, price, description });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "DB error" });
     }
 });
 
-// --- 4. PUT /items/{id} (Update) ---
-app.put('/items/:id', async (req, res) => {
+// Update a book
+app.put('/api/books/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, price, description } = req.body;
-
+        const { title, author, price, description } = req.body;
         const connection = await getDbConnection();
-
-        // Check if exists first
-        const [check] = await connection.execute('SELECT * FROM items WHERE id = ?', [id]);
+        
+        const [check] = await connection.execute('SELECT * FROM books WHERE id = ?', [id]);
         if (check.length === 0) {
             await connection.end();
-            return res.status(404).json({ error: "Item not found" });
+            return res.status(404).json({ error: "Book not found" });
         }
 
-        // Perform Update
         await connection.execute(
-            'UPDATE items SET name = ?, price = ?, description = ? WHERE id = ?',
-            [name, price, description, id]
+            'UPDATE books SET title = ?, author = ?, price = ?, description = ? WHERE id = ?',
+            [title, author, price, description, id]
         );
         await connection.end();
-
-        res.json({ id, name, price, description, message: "Updated successfully" });
+        res.json({ id, title, author, price, description, message: "Updated successfully" });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "DB error" });
     }
 });
 
-// --- 5. DELETE /items/{id} ---
-app.delete('/items/:id', async (req, res) => {
+// Delete a book
+app.delete('/api/books/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const connection = await getDbConnection();
-
-        // Check if exists first
-        const [check] = await connection.execute('SELECT * FROM items WHERE id = ?', [id]);
+        
+        const [check] = await connection.execute('SELECT * FROM books WHERE id = ?', [id]);
         if (check.length === 0) {
             await connection.end();
-            return res.status(404).json({ error: "Item not found" });
+            return res.status(404).json({ error: "Book not found" });
         }
 
-        // Perform Delete
-        await connection.execute('DELETE FROM items WHERE id = ?', [id]);
+        await connection.execute('DELETE FROM books WHERE id = ?', [id]);
         await connection.end();
-
-        res.json({ message: "Item deleted successfully" });
+        res.json({ message: "Book deleted successfully" });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "DB error" });
@@ -150,6 +194,4 @@ app.delete('/items/:id', async (req, res) => {
 });
 
 const PORT = 3000;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

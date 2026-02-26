@@ -5,6 +5,12 @@ CREATE TABLE IF NOT EXISTS items (
     description TEXT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(255) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL
+);
+
 -- Insert some dummy data to test with
 INSERT INTO items (name, price, description) VALUES 
 ('Laptop', 1200.00, 'High performance laptop'),

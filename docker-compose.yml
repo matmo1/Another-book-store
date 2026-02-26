@@ -11,6 +11,18 @@ services:
       - DB_PASS=rootpassword
       - DB_NAME=rest_api_db
 
+  # --- NEW FRONTEND SERVICE ---
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app  # Maps your local Vue folder into the container
+    ports:
+      - "5173:5173"
+    command: sh -c "npm install && npm run dev"
+    depends_on:
+      - app
+
   db:
     image: mysql:8.0
     environment:
